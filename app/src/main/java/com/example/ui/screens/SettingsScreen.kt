@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.ui.viewmodel.UserViewModel
 import com.google.firebase.storage.FirebaseStorage
+import com.example.ui.voice.VoiceManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,19 +44,10 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit
 ) {
     val currentUser by userViewModel.currentUser.collectAsState()
-    val apiKeys by userViewModel.apiKeys.collectAsState()
 
     var friendName by remember { mutableStateOf(currentUser?.displayName ?: "Aura") }
     var selectedPersonality by remember { mutableStateOf(currentUser?.preferredPersonality ?: "Supportive") }
     var selectedAvatar by remember { mutableStateOf(currentUser?.avatarChoice ?: "avatar_1") }
-
-    var geminiKeyInput by remember { mutableStateOf(apiKeys["GEMINI_API_KEY"] ?: "") }
-    var openaiKeyInput by remember { mutableStateOf(apiKeys["OPENAI_API_KEY"] ?: "") }
-    var grokKeyInput by remember { mutableStateOf(apiKeys["GROK_API_KEY"] ?: "") }
-
-    var geminiVisible by remember { mutableStateOf(false) }
-    var openaiVisible by remember { mutableStateOf(false) }
-    var grokVisible by remember { mutableStateOf(false) }
 
     val personalities = listOf("Supportive", "Sarcastic Bestie", "Wise Sage", "Cheerleader")
     val avatars = listOf("avatar_1", "avatar_2", "avatar_3", "avatar_4")
@@ -65,6 +57,12 @@ fun SettingsScreen(
     var showSavedMessage by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val voiceManager = remember { VoiceManager(context) }
+    DisposableEffect(Unit) {
+        onDispose {
+            voiceManager.destroy()
+        }
+    }
     var isUploading by remember { mutableStateOf(false) }
 
     val photoLauncher = rememberLauncherForActivityResult(
@@ -309,7 +307,7 @@ fun SettingsScreen(
                 }
             }
 
-            // Key Override settings
+            // Tamil Speech (TTS) Voice Pack Card
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 shape = RoundedCornerShape(16.dp),
@@ -322,81 +320,50 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.VpnKey, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text("Model API Endpoints (Fallback Keys)", color = MaterialTheme.colorScheme.onBackground, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text("Tamil Speech (TTS) Voice Pack", color = MaterialTheme.colorScheme.onBackground, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
 
                     Text(
-                        text = "Customize keys to override local fallback limits. By default, the app uses Gemini models securely defined inside AI Studio.",
+                        text = "Aura automatically detects Tamil script input and dynamically switches to the high-quality Localized Tamil text-to-speech voice pack. If speech sounds robotic or doesn't play, make sure the Google Tamil (India) Speech Package is fully complete on your device.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp
                     )
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), thickness = 1.dp)
 
-                    // Gemini input
-                    OutlinedTextField(
-                        value = geminiKeyInput,
-                        onValueChange = { geminiKeyInput = it },
-                        label = { Text("Gemini API Key Override") },
-                        trailingIcon = {
-                            IconButton(onClick = { geminiVisible = !geminiVisible }) {
-                                Icon(if (geminiVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, null, tint = MaterialTheme.colorScheme.primary)
-                            }
-                        },
-                        visualTransformation = if (geminiVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        singleLine = true,
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                        )
-                    )
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                voiceManager.speak("வணக்கம்! நான் உங்கள் நண்பன் அவுரா பேசுகிறேன். தமிழ் குரல் வழி சேவை வெற்றிகரமாக இயக்கப்பட்டது.")
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.VolumeUp, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Test Tamil Voice", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
 
-                    // OpenAI input
-                    OutlinedTextField(
-                        value = openaiKeyInput,
-                        onValueChange = { openaiKeyInput = it },
-                        label = { Text("OpenAI API Key Override") },
-                        trailingIcon = {
-                            IconButton(onClick = { openaiVisible = !openaiVisible }) {
-                                Icon(if (openaiVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, null, tint = MaterialTheme.colorScheme.primary)
-                            }
-                        },
-                        visualTransformation = if (openaiVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                        )
-                    )
-
-                    // Grok input
-                    OutlinedTextField(
-                        value = grokKeyInput,
-                        onValueChange = { grokKeyInput = it },
-                        label = { Text("Grok or Groq API Key Override") },
-                        trailingIcon = {
-                            IconButton(onClick = { grokVisible = !grokVisible }) {
-                                Icon(if (grokVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, null, tint = MaterialTheme.colorScheme.primary)
-                            }
-                        },
-                        visualTransformation = if (grokVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                        )
-                    )
+                        Button(
+                            onClick = {
+                                voiceManager.launchTtsSettings(context)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Settings, null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("TTS Voice Settings", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
 
@@ -404,7 +371,6 @@ fun SettingsScreen(
             Button(
                 onClick = {
                     userViewModel.updatePersonalization(friendName, selectedPersonality, selectedAvatar)
-                    userViewModel.setApiKeys(geminiKeyInput, openaiKeyInput, grokKeyInput)
                     showSavedMessage = true
                 },
                 modifier = Modifier

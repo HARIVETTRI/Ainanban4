@@ -5,28 +5,150 @@ import com.example.data.local.*
 import com.example.data.remote.*
 import kotlinx.coroutines.flow.Flow
 import java.net.URLEncoder
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
 
 class VirtualFriendRepository(
     private val userDao: UserDao,
     private val chatDao: ChatDao,
     private val apiService: AIApiService = RetrofitClient.apiService
 ) {
+    private val firebaseAuth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+    private val firebaseDatabase: FirebaseDatabase by lazy { FirebaseDatabase.getInstance() }
+
+    fun getFirebaseUid(): String? {
+        return try {
+            firebaseAuth.currentUser?.uid
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun syncUserToFirebase(uid: String, user: User) {
+        try {
+            val ref = firebaseDatabase.getReference("users").child(uid)
+            val userMap = mapOf(
+                "id" to user.id,
+                "username" to user.username,
+                "displayName" to user.displayName,
+                "avatarChoice" to user.avatarChoice,
+                "preferredPersonality" to user.preferredPersonality
+            )
+            ref.setValue(userMap)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun syncSessionToFirebase(session: ChatSession) {
+        val uid = getFirebaseUid() ?: return
+        try {
+            val ref = firebaseDatabase.getReference("conversations")
+                .child(uid).child("sessions").child(session.id.toString())
+            val sessionMap = mapOf(
+                "id" to session.id,
+                "userId" to session.userId,
+                "title" to session.title,
+                "initialEmotion" to session.initialEmotion,
+                "createdAt" to session.createdAt
+            )
+            ref.setValue(sessionMap)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun deleteSessionFromFirebase(sessionId: Int) {
+        val uid = getFirebaseUid() ?: return
+        try {
+            val ref = firebaseDatabase.getReference("conversations").child(uid)
+            ref.child("sessions").child(sessionId.toString()).removeValue()
+            ref.child("messages").child(sessionId.toString()).removeValue()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun syncMessageToFirebase(message: ChatMessage) {
+        val uid = getFirebaseUid() ?: return
+        try {
+            val ref = firebaseDatabase.getReference("conversations")
+                .child(uid).child("messages").child(message.sessionId.toString()).child(message.id.toString())
+            val messageMap = mapOf(
+                "id" to message.id,
+                "sessionId" to message.sessionId,
+                "sender" to message.sender,
+                "content" to message.content,
+                "detectedEmotion" to message.detectedEmotion,
+                "apiUsed" to message.apiUsed,
+                "timestamp" to message.timestamp
+            )
+            ref.setValue(messageMap)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun clearMessagesFromFirebase(sessionId: Int) {
+        val uid = getFirebaseUid() ?: return
+        try {
+            val ref = firebaseDatabase.getReference("conversations")
+                .child(uid).child("messages").child(sessionId.toString())
+            ref.removeValue()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     // --- User Database Methods ---
     suspend fun getUserByUsername(username: String): User? = userDao.getUserByUsername(username)
     suspend fun getUserById(id: Int): User? = userDao.getUserById(id)
-    suspend fun insertUser(user: User): Long = userDao.insertUser(user)
-    suspend fun updateUser(user: User) = userDao.updateUser(user)
+    
+    suspend fun insertUser(user: User): Long {
+        val id = userDao.insertUser(user)
+        val uid = getFirebaseUid()
+        if (uid != null) {
+            syncUserToFirebase(uid, user.copy(id = id.toInt()))
+        }
+        return id
+    }
+    
+    suspend fun updateUser(user: User) {
+        userDao.updateUser(user)
+        val uid = getFirebaseUid()
+        if (uid != null) {
+            syncUserToFirebase(uid, user)
+        }
+    }
 
     // --- Session Database Methods ---
     fun getSessionsForUser(userId: Int): Flow<List<ChatSession>> = chatDao.getSessionsForUser(userId)
     suspend fun getSessionById(sessionId: Int): ChatSession? = chatDao.getSessionById(sessionId)
-    suspend fun insertSession(session: ChatSession): Long = chatDao.insertSession(session)
-    suspend fun deleteSession(sessionId: Int) = chatDao.deleteSessionById(sessionId)
+    
+    suspend fun insertSession(session: ChatSession): Long {
+        val id = chatDao.insertSession(session)
+        syncSessionToFirebase(session.copy(id = id.toInt()))
+        return id
+    }
+    
+    suspend fun deleteSession(sessionId: Int) {
+        chatDao.deleteSessionById(sessionId)
+        deleteSessionFromFirebase(sessionId)
+    }
 
     // --- Messages Database Methods ---
     fun getMessagesForSession(sessionId: Int): Flow<List<ChatMessage>> = chatDao.getMessagesForSession(sessionId)
-    suspend fun insertMessage(message: ChatMessage): Long = chatDao.insertMessage(message)
-    suspend fun clearMessagesForSession(sessionId: Int) = chatDao.clearMessagesForSession(sessionId)
+    
+    suspend fun insertMessage(message: ChatMessage): Long {
+        val id = chatDao.insertMessage(message)
+        syncMessageToFirebase(message.copy(id = id.toInt()))
+        return id
+    }
+    
+    suspend fun clearMessagesForSession(sessionId: Int) {
+        chatDao.clearMessagesForSession(sessionId)
+        clearMessagesFromFirebase(sessionId)
+    }
 
     // --- Fallback AI Chain ---
     suspend fun generateAIResponse(

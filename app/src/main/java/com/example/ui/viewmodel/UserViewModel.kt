@@ -11,10 +11,25 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 class UserViewModel(application: Application) : AndroidViewModel(application) {
     private val repository: VirtualFriendRepository
     private val firebaseAuth: FirebaseAuth = FirebaseAuth.getInstance()
+
+    private suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitTask(): T {
+        return suspendCancellableCoroutine { continuation ->
+            addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    continuation.resume(task.result)
+                } else {
+                    continuation.resumeWithException(task.exception ?: Exception("Unknown error in Firebase connection"))
+                }
+            }
+        }
+    }
     
     private val _currentUser = MutableStateFlow<User?>(null)
     val currentUser: StateFlow<User?> = _currentUser.asStateFlow()
@@ -73,9 +88,9 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             try {
-                // Perform sign-in via Firebase Authentication
+                // Perform sign-in via Firebase Authentication and await completion
                 val firebaseEmail = if (username.contains("@")) username else "$username@virtualfriend.com"
-                firebaseAuth.signInWithEmailAndPassword(firebaseEmail, passwordHash)
+                firebaseAuth.signInWithEmailAndPassword(firebaseEmail, passwordHash).awaitTask()
 
                 // Match with local User entity for Room storage
                 var user = repository.getUserByUsername(username)
@@ -88,6 +103,12 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     val id = repository.insertUser(newUser)
                     user = newUser.copy(id = id.toInt())
+                } else {
+                    // Sync user profile from local database to Firebase Database
+                    val uid = firebaseAuth.currentUser?.uid
+                    if (uid != null) {
+                        repository.syncUserToFirebase(uid, user)
+                    }
                 }
                 _currentUser.value = user
                 _friendName.value = user.displayName.ifEmpty { "Aura" }
@@ -111,9 +132,9 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             try {
-                // Register via Firebase Authentication
+                // Register via Firebase Authentication and await completion
                 val firebaseEmail = if (username.contains("@")) username else "$username@virtualfriend.com"
-                firebaseAuth.createUserWithEmailAndPassword(firebaseEmail, passwordHash)
+                firebaseAuth.createUserWithEmailAndPassword(firebaseEmail, passwordHash).awaitTask()
 
                 val newUser = User(
                     username = username,
@@ -151,14 +172,6 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
             _currentUser.value = updated
             _friendName.value = friendName
         }
-    }
-
-    fun setApiKeys(gemini: String, openai: String, grok: String) {
-        _apiKeys.value = mapOf(
-            "GEMINI_API_KEY" to gemini,
-            "OPENAI_API_KEY" to openai,
-            "GROK_API_KEY" to grok
-        )
     }
 
     fun clearErrors() {

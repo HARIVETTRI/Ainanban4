@@ -176,7 +176,50 @@ class VoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
         _isSpeaking.value = true
         // Clean markdown indicators or emojis from speech to sound natural if needed, but simple text is fine.
         val cleanText = sanitizeTextForSpeech(text)
+        
+        // Dynamically switch language block for Tamil script
+        val hasTamil = containsTamil(cleanText)
+        if (hasTamil) {
+            val tamilLocale = Locale("ta", "IN")
+            val isSupported = tts?.setLanguage(tamilLocale)
+            if (isSupported == TextToSpeech.LANG_MISSING_DATA || isSupported == TextToSpeech.LANG_NOT_SUPPORTED) {
+                Log.w(tag, "Tamil Voice Pack missing or not supported on this device. Falling back to default.")
+                tts?.setLanguage(Locale.getDefault())
+            } else {
+                Log.i(tag, "Switched TTS Engine context to Localized Tamil Mode (ta-IN)")
+            }
+        } else {
+            tts?.setLanguage(Locale.getDefault())
+        }
+        
         tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, "aura_val")
+    }
+
+    private fun containsTamil(text: String): Boolean {
+        for (char in text) {
+            if (char.code in 0x0B80..0x0BFF) {
+                return true
+            }
+        }
+        return false
+    }
+
+    fun launchTtsSettings(ctx: Context) {
+        try {
+            val intent = Intent()
+            intent.action = "com.android.settings.TTS_SETTINGS"
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            ctx.startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                val installIntent = Intent()
+                installIntent.action = TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA
+                installIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                ctx.startActivity(installIntent)
+            } catch (ex: Exception) {
+                Log.e(tag, "Error triggering system TTS intent", ex)
+            }
+        }
     }
 
     fun stopSpeaking() {

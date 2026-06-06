@@ -1,0 +1,6 @@
+{
+  "name": "Virtual Friend",
+  "description": "An AI-powered companion that detects your facial expressions and speaks with you like a supportive, personal friend.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

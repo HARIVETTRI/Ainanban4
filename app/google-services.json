@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "295210164342",
+    "project_id": "virtualnanban",
+    "storage_bucket": "virtualnanban.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:295210164342:android:4e627e70d5eddb6e703f57",
+        "android_client_info": {
+          "package_name": "com.aistudio.virtualfriend.zyxwuv"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyChp_ZUaUZ29KQR-CN829N34EY-VBpVu4U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:295210164342:android:61fac9c114ffce2e703f57",
+        "android_client_info": {
+          "package_name": "com.virtualnanban"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyChp_ZUaUZ29KQR-CN829N34EY-VBpVu4U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -113,6 +113,37 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun autoDetectEmotionFromText(text: String): String? {
+        val normalized = text.lowercase()
+        return when {
+            normalized.contains("happy") || normalized.contains("excited") || normalized.contains("joy") ||
+            normalized.contains("glad") || normalized.contains("smiling") || normalized.contains("great") ||
+            normalized.contains("good") || normalized.contains("love") || normalized.contains("wonderful") ||
+            normalized.contains("awesome") || normalized.contains("proud") || normalized.contains("fun") ||
+            normalized.contains("smile") || normalized.contains("cheer") || normalized.contains("laugh") ||
+            normalized.contains("blessed") || normalized.contains("thankful") || normalized.contains("perfect") -> "Happy"
+
+            normalized.contains("sad") || normalized.contains("cry") || normalized.contains("lonely") ||
+            normalized.contains("hurt") || normalized.contains("tear") || normalized.contains("disappointed") ||
+            normalized.contains("sorry") || normalized.contains("pain") || normalized.contains("bad") ||
+            normalized.contains("low") || normalized.contains("upset") || normalized.contains("miss") ||
+            normalized.contains("sigh") || normalized.contains("hopeless") || normalized.contains("grief") ||
+            normalized.contains("broken") || normalized.contains("empty") || normalized.contains("down") -> "Sad"
+
+            normalized.contains("angry") || normalized.contains("mad") || normalized.contains("hate") ||
+            normalized.contains("furious") || normalized.contains("annoyed") || normalized.contains("frustrated") ||
+            normalized.contains("stupid") || normalized.contains("idiot") || normalized.contains("rage") ||
+            normalized.contains("irritated") || normalized.contains("annoy") || normalized.contains("pissed") -> "Angry"
+
+            normalized.contains("wow") || normalized.contains("surprise") || normalized.contains("shocked") ||
+            normalized.contains("really") || normalized.contains("omg") || normalized.contains("wait") ||
+            normalized.contains("incredible") || normalized.contains("unbelievable") || normalized.contains("unexpected") ||
+            normalized.contains("shock") || normalized.contains("amaze") || normalized.contains("astound") -> "Surprised"
+
+            else -> null
+        }
+    }
+
     fun sendMessage(
         content: String,
         friendName: String,
@@ -124,6 +155,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (content.isBlank()) return
 
         viewModelScope.launch {
+            // Automatically detect user emotion from message content text if found
+            val detected = autoDetectEmotionFromText(content)
+            if (detected != null) {
+                _lastDetectedEmotion.value = detected
+            }
+            
             // Save user message
             val userEmotion = _lastDetectedEmotion.value
             val userMsg = ChatMessage(

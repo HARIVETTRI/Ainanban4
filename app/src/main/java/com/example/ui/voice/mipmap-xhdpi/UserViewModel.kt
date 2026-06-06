@@ -34,6 +34,35 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
     init {
         val database = AppDatabase.getDatabase(application)
         repository = VirtualFriendRepository(database.userDao(), database.chatDao())
+
+        // Check if there is an active Firebase user session to perform automatic direct login
+        val fbUser = firebaseAuth.currentUser
+        if (fbUser != null) {
+            val email = fbUser.email ?: ""
+            val username = if (email.endsWith("@virtualfriend.com")) {
+                email.substringBefore("@virtualfriend.com")
+            } else {
+                email
+            }
+            if (username.isNotEmpty()) {
+                viewModelScope.launch {
+                    var localUser = repository.getUserByUsername(username)
+                    if (localUser == null) {
+                        val fallbackName = username.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                        val newUser = User(
+                            username = username,
+                            passwordHash = "",
+                            displayName = fallbackName,
+                            preferredPersonality = "Supportive"
+                        )
+                        val id = repository.insertUser(newUser)
+                        localUser = newUser.copy(id = id.toInt())
+                    }
+                    _currentUser.value = localUser
+                    _friendName.value = localUser.displayName.ifEmpty { "Aura" }
+                }
+            }
+        }
     }
 
     fun login(username: String, passwordHash: String) {

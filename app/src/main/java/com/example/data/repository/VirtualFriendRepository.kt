@@ -190,6 +190,7 @@ class VirtualFriendRepository(
             2. Be conversational, concise, and engaging. Limit answers to 1 to 3 sentences so it feels like texting.
             3. Reference or gently acknowledge their current mood ($emotion) if appropriate, especially if it changed, to show emotional awareness, but don't over-dwell on it.
             4. Speak directly to them, never speak in third person. Maintain your '$personality' persona consistently!
+            5. Language Support: Speak or chat fluently in English, Tamil (தமிழ்), or Tanglish (Tamil words written using the English alphabet, like 'Saptiya?', 'Epdi iruka?', 'Nalla iruken'). Code-switch naturally or respond in Tamil/Tanglish directly if the friend starts using Tamil/Tanglish or prompts you to. Keep it natural, friendly, and warm.
         """.trimIndent()
     }
 

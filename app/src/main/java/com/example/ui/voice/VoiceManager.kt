@@ -11,11 +11,19 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 class VoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     private val tag = "VoiceManager"
+    private val scope = CoroutineScope(Dispatchers.Main + Job())
+    private var maxListeningJob: Job? = null
 
     // Text To Speech (TTS) Engine
     private var tts: TextToSpeech? = null
@@ -74,9 +82,11 @@ class VoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
 
                 override fun onEndOfSpeech() {
                     _sttState.value = SttState.Processing
+                    maxListeningJob?.cancel()
                 }
 
                 override fun onError(error: Int) {
+                    maxListeningJob?.cancel()
                     val errorMessage = when (error) {
                         SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
                         SpeechRecognizer.ERROR_CLIENT -> "Client side error"
@@ -94,6 +104,7 @@ class VoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
                 }
 
                 override fun onResults(results: Bundle?) {
+                    maxListeningJob?.cancel()
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val resultText = matches?.firstOrNull() ?: ""
                     if (resultText.isNotBlank()) {
@@ -186,10 +197,30 @@ class VoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().language)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            
+            // Set extra settings to keep listening active for at least 8 seconds
+            putExtra("android.speech.extras.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 8000)
+            putExtra("android.speech.extras.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 8000)
+            putExtra("android.speech.extras.SPEECH_INPUT_POSSIBLE_COMPLETE_SILENCE_LENGTH_MILLIS", 8000)
+            putExtra("android.speech.extras.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 8000L)
+            putExtra("android.speech.extras.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 8000L)
+            putExtra("android.speech.extras.SPEECH_INPUT_POSSIBLE_COMPLETE_SILENCE_LENGTH_MILLIS", 8000L)
+            putExtra("android.speech.extra.DICTATION_MODE", true)
         }
 
         try {
             speechRecognizer?.startListening(intent)
+            
+            // Limit listening duration to 25 seconds maximum
+            maxListeningJob?.cancel()
+            maxListeningJob = scope.launch {
+                delay(25000L)
+                val currentState = _sttState.value
+                if (currentState is SttState.Listening || currentState is SttState.Idle) {
+                    Log.i(tag, "Maximum 25s speech threshold reached. Ending listening session.")
+                    stopListening()
+                }
+            }
         } catch (e: Exception) {
             Log.e(tag, "Failed to start listening", e)
             _sttState.value = SttState.Error("Failed to trigger record engine")
@@ -197,6 +228,7 @@ class VoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
     }
 
     fun stopListening() {
+        maxListeningJob?.cancel()
         try {
             speechRecognizer?.stopListening()
         } catch (e: Exception) {
@@ -211,6 +243,11 @@ class VoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     // Resource cleanup
     fun destroy() {
+        try {
+            scope.cancel()
+        } catch (e: Exception) {
+            Log.e(tag, "Error canceling coroutine scope", e)
+        }
         try {
             tts?.stop()
             tts?.shutdown()

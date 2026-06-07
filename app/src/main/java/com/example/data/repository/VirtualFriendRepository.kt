@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import android.util.Log
 import com.example.BuildConfig
 import com.example.data.local.*
 import com.example.data.remote.*
@@ -7,6 +8,9 @@ import kotlinx.coroutines.flow.Flow
 import java.net.URLEncoder
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 class VirtualFriendRepository(
     private val userDao: UserDao,
@@ -15,6 +19,7 @@ class VirtualFriendRepository(
 ) {
     private val firebaseAuth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
     private val firebaseDatabase: FirebaseDatabase by lazy { FirebaseDatabase.getInstance() }
+    private val firestore: FirebaseFirestore by lazy { FirebaseFirestore.getInstance() }
 
     fun getFirebaseUid(): String? {
         return try {
@@ -40,6 +45,24 @@ class VirtualFriendRepository(
         }
     }
 
+    fun syncUserToFirestore(uid: String, user: User) {
+        try {
+            val userMap = mapOf(
+                "id" to user.id,
+                "username" to user.username,
+                "displayName" to user.displayName,
+                "avatarChoice" to user.avatarChoice,
+                "preferredPersonality" to user.preferredPersonality
+            )
+            firestore.collection("users").document(uid).set(userMap)
+                .addOnFailureListener { e ->
+                    Log.e("VirtualFriendRepo", "Error syncing user to Firestore", e)
+                }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun syncSessionToFirebase(session: ChatSession) {
         val uid = getFirebaseUid() ?: return
         try {
@@ -58,12 +81,44 @@ class VirtualFriendRepository(
         }
     }
 
+    fun syncSessionToFirestore(session: ChatSession) {
+        val uid = getFirebaseUid() ?: return
+        try {
+            val sessionMap = mapOf(
+                "id" to session.id,
+                "userId" to session.userId,
+                "title" to session.title,
+                "initialEmotion" to session.initialEmotion,
+                "createdAt" to session.createdAt
+            )
+            firestore.collection("users").document(uid)
+                .collection("sessions").document(session.id.toString())
+                .set(sessionMap)
+                .addOnFailureListener { e ->
+                    Log.e("VirtualFriendRepo", "Error syncing session to Firestore", e)
+                }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun deleteSessionFromFirebase(sessionId: Int) {
         val uid = getFirebaseUid() ?: return
         try {
             val ref = firebaseDatabase.getReference("conversations").child(uid)
             ref.child("sessions").child(sessionId.toString()).removeValue()
             ref.child("messages").child(sessionId.toString()).removeValue()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun deleteSessionFromFirestore(sessionId: Int) {
+        val uid = getFirebaseUid() ?: return
+        try {
+            firestore.collection("users").document(uid)
+                .collection("sessions").document(sessionId.toString())
+                .delete()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -89,6 +144,30 @@ class VirtualFriendRepository(
         }
     }
 
+    fun syncMessageToFirestore(message: ChatMessage) {
+        val uid = getFirebaseUid() ?: return
+        try {
+            val messageMap = mapOf(
+                "id" to message.id,
+                "sessionId" to message.sessionId,
+                "sender" to message.sender,
+                "content" to message.content,
+                "detectedEmotion" to message.detectedEmotion,
+                "apiUsed" to message.apiUsed,
+                "timestamp" to message.timestamp
+            )
+            firestore.collection("users").document(uid)
+                .collection("sessions").document(message.sessionId.toString())
+                .collection("messages").document(message.id.toString())
+                .set(messageMap)
+                .addOnFailureListener { e ->
+                    Log.e("VirtualFriendRepo", "Error syncing message to Firestore", e)
+                }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     fun clearMessagesFromFirebase(sessionId: Int) {
         val uid = getFirebaseUid() ?: return
         try {
@@ -100,6 +179,110 @@ class VirtualFriendRepository(
         }
     }
 
+    suspend fun fetchUserProfileFromFirestore(): User? {
+        val uid = getFirebaseUid() ?: return null
+        return suspendCancellableCoroutine { continuation ->
+            firestore.collection("users").document(uid).get()
+                .addOnSuccessListener { document ->
+                    if (document != null && document.exists()) {
+                        val dbId = document.getLong("id")?.toInt() ?: 1
+                        val username = document.getString("username") ?: ""
+                        val displayName = document.getString("displayName") ?: ""
+                        val avatarChoice = document.getString("avatarChoice") ?: "avatar_1"
+                        val preferredPersonality = document.getString("preferredPersonality") ?: "Supportive"
+                        
+                        val user = User(
+                            id = dbId,
+                            username = username,
+                            passwordHash = "", // Security
+                            displayName = displayName,
+                            avatarChoice = avatarChoice,
+                            preferredPersonality = preferredPersonality
+                        )
+                        continuation.resume(user)
+                    } else {
+                        continuation.resume(null)
+                    }
+                }
+                .addOnFailureListener { e ->
+                    Log.e("VirtualFriendRepo", "Error fetching user from Firestore", e)
+                    continuation.resume(null)
+                }
+        }
+    }
+
+    suspend fun fetchConversationsFromFirestore(userId: Int) {
+        val uid = getFirebaseUid() ?: return
+        try {
+            val sessionsSnapshot = suspendCancellableCoroutine<com.google.firebase.firestore.QuerySnapshot?> { continuation ->
+                firestore.collection("users").document(uid).collection("sessions")
+                    .get()
+                    .addOnCompleteListener { task ->
+                        if (task.isSuccessful) {
+                            continuation.resume(task.result)
+                        } else {
+                            continuation.resume(null)
+                        }
+                    }
+            } ?: return
+
+            for (sessionDoc in sessionsSnapshot.documents) {
+                val sId = sessionDoc.getLong("id")?.toInt() ?: continue
+                val sUserId = sessionDoc.getLong("userId")?.toInt() ?: userId
+                val sTitle = sessionDoc.getString("title") ?: "Conversation"
+                val sInitialEmotion = sessionDoc.getString("initialEmotion") ?: "Neutral"
+                val sCreatedAt = sessionDoc.getLong("createdAt") ?: System.currentTimeMillis()
+
+                val newSession = ChatSession(
+                    id = sId,
+                    userId = sUserId,
+                    title = sTitle,
+                    initialEmotion = sInitialEmotion,
+                    createdAt = sCreatedAt
+                )
+                chatDao.insertSession(newSession)
+
+                // Fetch messages for this session
+                val messagesSnapshot = suspendCancellableCoroutine<com.google.firebase.firestore.QuerySnapshot?> { continuation ->
+                    firestore.collection("users").document(uid)
+                        .collection("sessions").document(sId.toString())
+                        .collection("messages")
+                        .get()
+                        .addOnCompleteListener { task ->
+                            if (task.isSuccessful) {
+                                continuation.resume(task.result)
+                            } else {
+                                continuation.resume(null)
+                            }
+                        }
+                } ?: continue
+
+                for (msgDoc in messagesSnapshot.documents) {
+                    val mId = msgDoc.getLong("id")?.toInt() ?: continue
+                    val mSessionId = msgDoc.getLong("sessionId")?.toInt() ?: sId
+                    val mSender = msgDoc.getString("sender") ?: "friend"
+                    val mContent = msgDoc.getString("content") ?: ""
+                    val mDetectedEmotion = msgDoc.getString("detectedEmotion") ?: "Neutral"
+                    val mApiUsed = msgDoc.getString("apiUsed") ?: "Offline Companion"
+                    val mTimestamp = msgDoc.getLong("timestamp") ?: System.currentTimeMillis()
+
+                    val newMsg = ChatMessage(
+                        id = mId,
+                        sessionId = mSessionId,
+                        sender = mSender,
+                        content = mContent,
+                        detectedEmotion = mDetectedEmotion,
+                        apiUsed = mApiUsed,
+                        timestamp = mTimestamp
+                    )
+                    chatDao.insertMessage(newMsg)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("VirtualFriendRepo", "Error fetching conversations from Firestore", e)
+        }
+    }
+
     // --- User Database Methods ---
     suspend fun getUserByUsername(username: String): User? = userDao.getUserByUsername(username)
     suspend fun getUserById(id: Int): User? = userDao.getUserById(id)
@@ -108,7 +291,9 @@ class VirtualFriendRepository(
         val id = userDao.insertUser(user)
         val uid = getFirebaseUid()
         if (uid != null) {
-            syncUserToFirebase(uid, user.copy(id = id.toInt()))
+            val userWithId = user.copy(id = id.toInt())
+            syncUserToFirebase(uid, userWithId)
+            syncUserToFirestore(uid, userWithId)
         }
         return id
     }
@@ -118,6 +303,7 @@ class VirtualFriendRepository(
         val uid = getFirebaseUid()
         if (uid != null) {
             syncUserToFirebase(uid, user)
+            syncUserToFirestore(uid, user)
         }
     }
 
@@ -127,13 +313,16 @@ class VirtualFriendRepository(
     
     suspend fun insertSession(session: ChatSession): Long {
         val id = chatDao.insertSession(session)
-        syncSessionToFirebase(session.copy(id = id.toInt()))
+        val sessionWithId = session.copy(id = id.toInt())
+        syncSessionToFirebase(sessionWithId)
+        syncSessionToFirestore(sessionWithId)
         return id
     }
     
     suspend fun deleteSession(sessionId: Int) {
         chatDao.deleteSessionById(sessionId)
         deleteSessionFromFirebase(sessionId)
+        deleteSessionFromFirestore(sessionId)
     }
 
     // --- Messages Database Methods ---
@@ -141,7 +330,9 @@ class VirtualFriendRepository(
     
     suspend fun insertMessage(message: ChatMessage): Long {
         val id = chatDao.insertMessage(message)
-        syncMessageToFirebase(message.copy(id = id.toInt()))
+        val messageWithId = message.copy(id = id.toInt())
+        syncMessageToFirebase(messageWithId)
+        syncMessageToFirestore(messageWithId)
         return id
     }
     
@@ -159,6 +350,8 @@ class VirtualFriendRepository(
         currentEmotion: String,
         customKeys: Map<String, String> = emptyMap()
     ): AIResult {
+        val errorsList = mutableListOf<String>()
+
         // 1. Gather API Keys from settings or BuildConfig
         val geminiKey = customKeys["GEMINI_API_KEY"]?.trim()?.replace("YOUR_GEMINI_API_KEY", "")?.ifEmpty { null }
             ?: (try { BuildConfig.GEMINI_API_KEY } catch (e: Exception) { "" }).trim().replace("YOUR_GEMINI_API_KEY", "")
@@ -175,39 +368,55 @@ class VirtualFriendRepository(
         // 3. Chain execution
         
         // --- STEP 1: TRY GEMINI (PRIMARY) ---
-        if (geminiKey.isNotEmpty() && !geminiKey.startsWith("MY_GEMINI_API_KEY")) {
-            try {
-                val geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$geminiKey"
-                
-                // Formulate contents list
-                val geminiContents = mutableListOf<GeminiContent>()
-                
-                // Keep last 15 messages for context
-                val contextualMessages = messages.takeLast(15)
-                contextualMessages.forEach { msg ->
-                    val roleName = if (msg.sender == "user") "user" else "model"
-                    geminiContents.add(
-                        GeminiContent(
-                            parts = listOf(GeminiPart(text = msg.content)),
-                            role = roleName
+        if (geminiKey.isNotEmpty() && !geminiKey.startsWith("MY_GEMINI_API_KEY") && !geminiKey.startsWith("YOUR_GEMINI_API_KEY")) {
+            val modelsToTry = listOf("gemini-3.5-flash", "gemini-3.1-flash-lite-preview", "gemini-3.1-pro-preview")
+            var finalReply: String? = null
+            var lastEx: Exception? = null
+
+            for (modelName in modelsToTry) {
+                try {
+                    val geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$geminiKey"
+                    
+                    // Formulate contents list
+                    val geminiContents = mutableListOf<GeminiContent>()
+                    
+                    // Keep last 15 messages for context
+                    val contextualMessages = messages.takeLast(15)
+                    contextualMessages.forEach { msg ->
+                        val roleName = if (msg.sender == "user") "user" else "model"
+                        geminiContents.add(
+                            GeminiContent(
+                                parts = listOf(GeminiPart(text = msg.content)),
+                                role = roleName
+                            )
                         )
+                    }
+
+                    val request = GeminiRequest(
+                        contents = geminiContents,
+                        systemInstruction = GeminiContent(parts = listOf(GeminiPart(text = systemPrompt))),
+                        generationConfig = GeminiGenerationConfig(temperature = 0.8f, maxOutputTokens = 300)
                     )
-                }
 
-                val request = GeminiRequest(
-                    contents = geminiContents,
-                    systemInstruction = GeminiContent(parts = listOf(GeminiPart(text = systemPrompt))),
-                    generationConfig = GeminiGenerationConfig(temperature = 0.8f, maxOutputTokens = 300)
-                )
-
-                val response = apiService.generateGeminiContent(geminiUrl, request)
-                val replyText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                if (!replyText.isNullOrEmpty()) {
-                    return AIResult(replyText, "Gemini")
+                    val response = apiService.generateGeminiContent(geminiUrl, request)
+                    val replyText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                    if (!replyText.isNullOrEmpty()) {
+                        finalReply = replyText
+                        break
+                    }
+                } catch (e: Exception) {
+                    lastEx = e
                 }
-            } catch (e: Exception) {
-                e.printStackTrace() // Log and silently fall forward
             }
+
+            if (!finalReply.isNullOrEmpty()) {
+                return AIResult(finalReply, "Gemini")
+            } else {
+                val errorMsg = lastEx?.localizedMessage ?: "Gemini returned empty response candidates"
+                errorsList.add("Gemini error: $errorMsg")
+            }
+        } else {
+            errorsList.add("Gemini API key is empty or placeholder")
         }
 
         // --- STEP 2: TRY OPENAI (FALLBACK 1) ---
@@ -236,8 +445,11 @@ class VirtualFriendRepository(
                 val replyText = response.choices?.firstOrNull()?.message?.content
                 if (!replyText.isNullOrEmpty()) {
                     return AIResult(replyText, "OpenAI (Fallback)")
+                } else {
+                    errorsList.add("OpenAI returned empty response")
                 }
             } catch (e: Exception) {
+                errorsList.add("OpenAI error: ${e.localizedMessage ?: e.javaClass.simpleName}")
                 e.printStackTrace()
             }
         }
@@ -277,15 +489,19 @@ class VirtualFriendRepository(
                 if (!replyText.isNullOrEmpty()) {
                     val serviceName = if (isGroq) "Groq (Fallback)" else "Grok (Fallback)"
                     return AIResult(replyText, serviceName)
+                } else {
+                    errorsList.add("Grok/Groq returned empty response")
                 }
             } catch (e: Exception) {
+                errorsList.add("Grok/Groq error: ${e.localizedMessage ?: e.javaClass.simpleName}")
                 e.printStackTrace()
             }
         }
 
         // --- STEP 4: OFFLINE SIMULATIVE FRIENDLY COMPANION ---
+        val errorReason = if (errorsList.isNotEmpty()) " (${errorsList.joinToString("; ")})" else ""
         val offlineReply = simulateOfflineReply(personality, currentEmotion, userDisplayName, friendName)
-        return AIResult(offlineReply, "Offline Companion")
+        return AIResult(offlineReply, "Offline Companion$errorReason")
     }
 
     private fun buildSystemPrompt(

@@ -63,15 +63,21 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                 viewModelScope.launch {
                     var localUser = repository.getUserByUsername(username)
                     if (localUser == null) {
-                        val fallbackName = username.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-                        val newUser = User(
-                            username = username,
-                            passwordHash = "",
-                            displayName = fallbackName,
-                            preferredPersonality = "Supportive"
-                        )
-                        val id = repository.insertUser(newUser)
-                        localUser = newUser.copy(id = id.toInt())
+                        val cloudUser = repository.fetchUserProfileFromFirestore()
+                        if (cloudUser != null) {
+                            val id = repository.insertUser(cloudUser)
+                            localUser = cloudUser.copy(id = id.toInt())
+                        } else {
+                            val fallbackName = username.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+                            val newUser = User(
+                                username = username,
+                                passwordHash = "",
+                                displayName = fallbackName,
+                                preferredPersonality = "Supportive"
+                            )
+                            val id = repository.insertUser(newUser)
+                            localUser = newUser.copy(id = id.toInt())
+                        }
                     }
                     _currentUser.value = localUser
                     _friendName.value = localUser.displayName.ifEmpty { "Aura" }
@@ -89,25 +95,35 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
             }
             try {
                 // Perform sign-in via Firebase Authentication and await completion
-                val firebaseEmail = if (username.contains("@")) username else "$username@virtualfriend.com"
+                val trimmedUsername = username.trim()
+                val sanitizedUsername = trimmedUsername.replace("\\s+".toRegex(), "")
+                val firebaseEmail = if (sanitizedUsername.contains("@")) sanitizedUsername.lowercase() else "${sanitizedUsername.lowercase()}@virtualfriend.com"
                 firebaseAuth.signInWithEmailAndPassword(firebaseEmail, passwordHash).awaitTask()
 
                 // Match with local User entity for Room storage
-                var user = repository.getUserByUsername(username)
+                var user = repository.getUserByUsername(trimmedUsername)
                 if (user == null) {
-                    val newUser = User(
-                        username = username,
-                        passwordHash = passwordHash,
-                        displayName = username.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() },
-                        preferredPersonality = "Supportive"
-                    )
-                    val id = repository.insertUser(newUser)
-                    user = newUser.copy(id = id.toInt())
+                    val cloudUser = repository.fetchUserProfileFromFirestore()
+                    if (cloudUser != null) {
+                        val restoredUser = cloudUser.copy(passwordHash = passwordHash)
+                        val id = repository.insertUser(restoredUser)
+                        user = restoredUser.copy(id = id.toInt())
+                    } else {
+                        val newUser = User(
+                            username = trimmedUsername,
+                            passwordHash = passwordHash,
+                            displayName = trimmedUsername.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() },
+                            preferredPersonality = "Supportive"
+                        )
+                        val id = repository.insertUser(newUser)
+                        user = newUser.copy(id = id.toInt())
+                    }
                 } else {
-                    // Sync user profile from local database to Firebase Database
+                    // Sync user profile from local database to Firebase Database & Firestore
                     val uid = firebaseAuth.currentUser?.uid
                     if (uid != null) {
                         repository.syncUserToFirebase(uid, user)
+                        repository.syncUserToFirestore(uid, user)
                     }
                 }
                 _currentUser.value = user
@@ -126,24 +142,40 @@ class UserViewModel(application: Application) : AndroidViewModel(application) {
                 _loginError.value = "All fields are required"
                 return@launch
             }
-            val existing = repository.getUserByUsername(username)
+            if (passwordHash.length < 6) {
+                _loginError.value = "Password must be at least 6 characters"
+                return@launch
+            }
+            val existing = repository.getUserByUsername(username.trim())
             if (existing != null) {
                 _loginError.value = "Username already exists locally"
                 return@launch
             }
             try {
                 // Register via Firebase Authentication and await completion
-                val firebaseEmail = if (username.contains("@")) username else "$username@virtualfriend.com"
+                val sanitizedUsername = username.trim().replace("\\s+".toRegex(), "")
+                val firebaseEmail = if (sanitizedUsername.contains("@")) sanitizedUsername.lowercase() else "${sanitizedUsername.lowercase()}@virtualfriend.com"
                 firebaseAuth.createUserWithEmailAndPassword(firebaseEmail, passwordHash).awaitTask()
 
                 val newUser = User(
-                    username = username,
+                    username = username.trim(),
                     passwordHash = passwordHash,
-                    displayName = displayName,
+                    displayName = displayName.trim(),
                     preferredPersonality = "Supportive"
                 )
                 val id = repository.insertUser(newUser)
                 if (id > 0) {
+                    val userWithId = newUser.copy(id = id.toInt())
+                    
+                    // Sync user profile to Firestore & Realtime DB instantly on sign up
+                    val uid = firebaseAuth.currentUser?.uid
+                    if (uid != null) {
+                        repository.syncUserToFirebase(uid, userWithId)
+                        repository.syncUserToFirestore(uid, userWithId)
+                    }
+                    
+                    _currentUser.value = userWithId
+                    _friendName.value = displayName.trim()
                     _registrationSuccess.value = true
                 } else {
                     _loginError.value = "Local registration failed"

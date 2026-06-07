@@ -74,6 +74,7 @@ dependencies {
   implementation(libs.firebase.auth)
   implementation(libs.firebase.storage)
   implementation(libs.firebase.database)
+  implementation(libs.firebase.firestore)
   implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.camera.camera2)

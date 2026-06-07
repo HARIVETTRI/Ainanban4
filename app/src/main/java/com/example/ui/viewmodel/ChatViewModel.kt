@@ -43,6 +43,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadSessions(userId: Int) {
         viewModelScope.launch {
+            // Retrieve latest conversation sessions and message elements stored on Firestore in the background
+            viewModelScope.launch {
+                try {
+                    repository.fetchConversationsFromFirestore(userId)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
             repository.getSessionsForUser(userId).collect { list ->
                 _sessions.value = list
             }
